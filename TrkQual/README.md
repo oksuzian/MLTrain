@@ -57,8 +57,8 @@ To evaluate models that are already trained (for example the files in ArtAnalysi
 ./trkqual_train.py configs/v3.0.yaml --models-from ../../ArtAnalysis/TrkDiag/data --outdir out/check
 ```
 
-### Checking a Training in art
-Before new model files go into ArtAnalysis, check that the ```TrackQuality``` module gives the training's scores. It builds the features from the ```KalSeed``` in C++ and runs the models with ONNXRuntime and XGBoost's C API, while the training builds them from EventNtuple branches in python. ```trkqual_check_art.py``` compares the two, track by track, on EventNtuples made in art with the new models. A few files are enough: nothing needs to run on the grid.
+### Checking art's Scores Against the Training
+Before new model files go into ArtAnalysis, check that the ```TrackQuality``` module gives the training's scores. It builds the features from the ```KalSeed``` in C++ and runs the models with ONNXRuntime and XGBoost's C API, while the training builds them from EventNtuple branches in python. ```trkqual_check_art.py``` compares the two, track by track. It does not run art itself: you first make EventNtuples with the new models in art, as below, and the script reads the scores art wrote into them. A few files are enough: nothing needs to run on the grid.
 
 First make the EventNtuples. Put the new model files where ```MU2E_SEARCH_PATH``` finds them, and add their scores to the EventNtuple as named branches (```check_v3.0.fcl```):
 
