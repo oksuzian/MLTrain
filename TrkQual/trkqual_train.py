@@ -110,8 +110,11 @@ def magnitude(tree_arrays, prefix):
     return np.power(np.power(x, 2) + np.power(y, 2) + np.power(z, 2), 0.5)
 
 
-def extract(cfg, ds):
-    """Fill ds with the features, reco and MC momentum at the tracker entrance of its selected tracks."""
+def extract(cfg, ds, extra_branches=()):
+    """Fill ds with the features, reco and MC momentum at the tracker entrance of its selected tracks.
+
+    Any extra_branches are kept too, for the same tracks, in ds.extra.
+    """
     import uproot
 
     derived = cfg.get("derived_features", {})
@@ -123,16 +126,20 @@ def extract(cfg, ds):
         needed.update(f"{prefix}.fCoordinates.f{c}" for c in "XYZ")
     if ds.is_training:
         needed.add("trk_sim.startCode")
+    needed.update(extra_branches)
 
     tree = uproot.open(f"{ds.trkqualtree}:trkqualtree")
     log(f"{ds.trkqualtree.name}: {tree.num_entries} entries")
     ds.n_entries = tree.num_entries
 
     features, reco_mom, mc_mom = [], [], []
+    extra = {b: [] for b in extra_branches}
     for batch in tree.iterate(sorted(needed), step_size="200 MB", library="np"):
         mask = (batch["trk.status"] > 0) & (batch["trk.goodfit"] == 1) & ~np.isnan(batch["trk_ent_pars.t0err"])
         if ds.is_training:
             mask &= batch["trk_sim.startCode"] == cfg["training_start_code"]
+        for b in extra_branches:
+            extra[b].append(batch[b][mask])
         with np.errstate(divide="ignore", invalid="ignore"):
             for name, (num, den) in derived.items():
                 batch[name] = batch[num] / batch[den]
@@ -140,6 +147,7 @@ def extract(cfg, ds):
         reco_mom.append(magnitude(batch, "trk_ent.mom")[mask].astype(np.float64))
         mc_mom.append(magnitude(batch, "trk_ent_mc.mom")[mask].astype(np.float64))
 
+    ds.extra = {b: np.concatenate(v) for b, v in extra.items()}
     ds.features = np.concatenate(features)
     ds.reco_mom = np.concatenate(reco_mom)
     ds.mc_mom = np.concatenate(mc_mom)

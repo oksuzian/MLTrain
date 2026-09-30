@@ -57,6 +57,54 @@ To evaluate models that are already trained (for example the files in ArtAnalysi
 ./trkqual_train.py configs/v3.0.yaml --models-from ../../ArtAnalysis/TrkDiag/data --outdir out/check
 ```
 
+### Checking a Training in art
+Before new model files go into ArtAnalysis, check that the ```TrackQuality``` module gives the training's scores. It builds the features from the ```KalSeed``` in C++ and runs the models with ONNXRuntime and XGBoost's C API, while the training builds them from EventNtuple branches in python. ```trkqual_check_art.py``` compares the two, track by track, on EventNtuples made in art with the new models. A few files are enough: nothing needs to run on the grid.
+
+First make the EventNtuples. Put the new model files where ```MU2E_SEARCH_PATH``` finds them, and add their scores to the EventNtuple as named branches (```check_v3.0.fcl```):
+
+```
+#include "EventNtuple/fcl/from_mcs-mockdata.fcl"
+
+# the models under test, found through MU2E_SEARCH_PATH
+physics.producers.TrkQualNew : @local::TrkQualAll
+physics.producers.TrkQualNew.onnxFilename : "ArtAnalysis/TrkDiag/data/TrkQual_ANN1_v3.0.onnx"
+physics.producers.TrkQualNew.xgbFilename : "ArtAnalysis/TrkDiag/data/TrkQual_BDT1_v3.0.ubj"
+physics.EventNtuplePath : [ @sequence::EventNtuple.Path, TrkQualNew ]
+
+physics.analyzers.EventNtuple.trk.fits[0].trkQualLeaves : [
+  { leafname : "_ann_v3_0" inputTag : "TrkQualNew:ANN" modelVersion : "TrkQual_ANN1_v3" },
+  { leafname : "_bdt_v3_0" inputTag : "TrkQualNew:BDT" modelVersion : "TrkQual_BDT1_v3" }
+]
+physics.analyzers.EventNtuple.trk.fillHits : false
+```
+
+and run it, in a new shell, on a few files of the mock dataset's ```mcs``` parent (they must be on disk, or prestaged):
+
+```
+mu2einit
+muse setup AnalysisMDC2025
+mkdir -p overlay/ArtAnalysis/TrkDiag/data
+cp out/v3.0/model/TrkQual_*_v3.0.* overlay/ArtAnalysis/TrkDiag/data/
+export MU2E_SEARCH_PATH=$PWD/overlay:$MU2E_SEARCH_PATH
+export OMP_NUM_THREADS=1   # XGBoost otherwise spins a thread per core
+setup mu2efiletools
+for f in $(mu2eDatasetFileList mcs.mu2e.ensembleMDS3cMix1BB.MDC2025au_best_v1_1.art | head -4); do
+  mu2e -c check_v3.0.fcl -s $f -T nts_$(basename $f .art).root
+done
+ls $PWD/nts_*.root > nts.list
+```
+
+(a file of ~10,000 events takes about 4 minutes). Then, back in the TrkQual python environment:
+
+```
+./trkqual_check_art.py configs/v3.0.yaml --ntuples nts.list \
+    --leaf trkqual_ann_v3_0=out/v3.0/model/TrkQual_ANN1_v3.0.onnx \
+    --leaf trkqual_bdt_v3_0=out/v3.0/model/TrkQual_BDT1_v3.0.ubj \
+    --summary out/v3.0/summary.json --workdir out/v3.0/check_art
+```
+
+It compares art's score with the python score of the same model file on every track, with the features built as the module builds them, and on the tracks the training selects (```scripts/TrkQualTree.C``` run on the new EventNtuples), with the features built as the training builds them. With ```--summary``` it also compares the high-quality efficiency at each model's trkqual cut. It writes ```check_art.json``` and exits non-zero if any track's scores differ. Any ```--leaf``` can be checked this way, including the models already in ArtAnalysis.
+
 ### Training a Model in the Notebook
 For training, you need to ssh into a mu2egpvm machine with a port forwarded, and setup the correct python environment:
 
