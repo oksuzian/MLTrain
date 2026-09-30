@@ -21,9 +21,15 @@ To evaluate models that are already trained (for example to check a training
 against the numbers it was published with), skip the training:
 
     ./trkqual_train.py configs/v3.0.yaml --models-from model/ --outdir out/check
+
+--model evaluates any file as one of the config's models, for example an older
+version's, to set its cut on this training's datasets:
+
+    ./trkqual_train.py configs/v3.0.yaml --model ANN1=TrkQual_ANN1_v2.0.onnx --outdir out/v2.0_on_v3.0
 """
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -405,6 +411,11 @@ def write_histograms(cfg, datasets, name, roc, path):
         out["roc_curve"] = pd.DataFrame({"tpr": roc["tpr"], "fpr": roc["fpr"], "thresh": roc["thresholds"]})
 
 
+def file_record(path):
+    """where a model file is and its SHA-256, so that its cut can be found again from the file itself"""
+    return {"model_file": str(Path(path).resolve()), "sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest()}
+
+
 def environment():
     versions = {"python": platform.python_version()}
     for module in ("numpy", "uproot", "sklearn", "xgboost", "tensorflow", "keras", "tf2onnx", "onnx"):
@@ -428,6 +439,10 @@ def main():
                         "(default: the current directory)")
     parser.add_argument("--models-from", metavar="DIR",
                         help="do not train: evaluate the TrkQual_<model>_v<version>.<onnx|ubj> files in DIR")
+    parser.add_argument("--model", action="append", default=[], metavar="NAME=FILE",
+                        help="do not train: evaluate FILE as the config's model NAME (repeatable), e.g. "
+                             "ANN1=TrkQual_ANN1_v2.0.onnx; overrides --models-from for that model, and without "
+                             "--models-from only the models named are evaluated")
     parser.add_argument("--trees-only", action="store_true", help="only make the missing TrkQual trees")
     parser.add_argument("--no-plots", action="store_true", help="skip the PNG plots")
     args = parser.parse_args()
@@ -436,6 +451,26 @@ def main():
         cfg = yaml.safe_load(f)
     version = cfg["training_version"]
     outdir = Path(args.outdir)
+
+    models = {}
+    for spec in cfg["models"]:
+        models[spec["name"]] = MODEL_TYPES[spec["type"]](spec, len(cfg["features"]))
+
+    # the files to evaluate instead of training: --models-from, then --model
+    model_files = {}
+    if args.models_from:
+        model_files = {name: Path(args.models_from) / f"TrkQual_{name}_v{version}.{model.suffix}"
+                       for name, model in models.items()}
+    for arg in args.model:
+        name, sep, path = arg.partition("=")
+        if not sep or name not in models:
+            sys.exit(f"trkqual_train: --model {arg}: expected NAME=FILE with NAME one of {list(models)}")
+        if Path(path).suffix != f".{models[name].suffix}":
+            sys.exit(f"trkqual_train: --model {arg}: {name} is a .{models[name].suffix} model")
+        model_files[name] = Path(path)
+    for path in model_files.values():
+        if not path.exists():
+            sys.exit(f"trkqual_train: {path} does not exist")
 
     datasets = [Dataset(name, dataset, cfg["trkqual_tree_dirname"], version, name == "training")
                 for name, dataset in cfg["datasets"].items()]
@@ -449,17 +484,14 @@ def main():
         extract(cfg, ds)
     training = datasets[0]
 
-    models = {}
-    for spec in cfg["models"]:
-        models[spec["name"]] = MODEL_TYPES[spec["type"]](spec, len(cfg["features"]))
-
     fit_info = {}
-    if args.models_from:
+    if model_files:
+        models = {name: model for name, model in models.items() if name in model_files}
         for name, model in models.items():
-            path = Path(args.models_from) / f"TrkQual_{name}_v{version}.{model.suffix}"
+            path = model_files[name]
             log(f"Loading {name} from {path}")
             model.load(path)
-            fit_info[name] = {"loaded_from": str(path.resolve())}
+            fit_info[name] = file_record(path)
     else:
         x_train, x_test, y_train, y_test = balanced_split(cfg, training)
         for name, model in models.items():
@@ -483,15 +515,17 @@ def main():
         ds.efficiency = {name: float(((ds.predictions[name] >= rocs[name]["cut"]) & ds.high_qual).sum()
                                      / ds.high_qual.sum()) for name in models}
 
-    if not args.models_from:
+    if not model_files:
         (outdir / "model").mkdir(parents=True, exist_ok=True)
         for name, model in models.items():
-            path = outdir / "model" / f"TrkQual_{name}_v{version}.{model.suffix}"
-            model.save(path)
-            log(f"Saved {path}")
+            model_files[name] = outdir / "model" / f"TrkQual_{name}_v{version}.{model.suffix}"
+            model.save(model_files[name])
+            fit_info[name].update(file_record(model_files[name]))
+            log(f"Saved {model_files[name]}")
     outdir.mkdir(parents=True, exist_ok=True)
     for name in models:
-        write_histograms(cfg, datasets, name, rocs[name], outdir / f"TrkQual_{name}_v{version}_plots.root")
+        # named after the model file, which for --model can be another version's
+        write_histograms(cfg, datasets, name, rocs[name], outdir / f"{model_files[name].stem}_plots.root")
     if not args.no_plots:
         write_plots(cfg, datasets, models, rocs, outdir / "plots" / f"v{version}")
 

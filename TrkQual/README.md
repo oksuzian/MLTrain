@@ -57,6 +57,16 @@ To evaluate models that are already trained (for example the files in ArtAnalysi
 ./trkqual_train.py configs/v3.0.yaml --models-from ../../ArtAnalysis/TrkDiag/data --outdir out/check
 ```
 
+```--model``` evaluates any file as one of the config's models. Use it, for example, to set an older version's cuts on this training's datasets, so that two versions can be compared at the same rejection:
+
+```
+./trkqual_train.py configs/v3.0.yaml --outdir out/v2.0_on_v3.0 \
+    --model ANN1=../../ArtAnalysis/TrkDiag/data/TrkQual_ANN1_v2.0.onnx \
+    --model BDT1=../../ArtAnalysis/TrkDiag/data/TrkQual_BDT1_v2.0.ubj
+```
+
+The ```*plots.root``` files are then named after the model files. Every ```summary.json``` records the path and SHA-256 of each model file it trained or evaluated.
+
 ### Checking art's Scores Against the Training
 Before new model files go into ArtAnalysis, check that the ```TrackQuality``` module gives the training's scores. It builds the features from the ```KalSeed``` in C++ and runs the models with ONNXRuntime and XGBoost's C API, while the training builds them from EventNtuple branches in python. ```trkqual_check_art.py``` compares the two, track by track. It does not run art itself: you first make EventNtuples with the new models in art, as below, and the script reads the scores art wrote into them. A few files are enough: nothing needs to run on the grid.
 
@@ -103,7 +113,31 @@ ls $PWD/nts_*.root > nts.list
     --summary out/v3.0/summary.json --workdir out/v3.0/check_art
 ```
 
-It compares art's score with the python score of the same model file on every track, with the features built as the module builds them, and on the tracks the training selects (```scripts/TrkQualTree.C``` run on the new EventNtuples), with the features built as the training builds them. With ```--summary``` it also compares the high-quality efficiency at each model's trkqual cut. It writes ```check_art.json``` and exits non-zero if any track's scores differ. Any ```--leaf``` can be checked this way, including the models already in ArtAnalysis.
+It compares art's score with the python score of the same model file:
+
+* on every track, with the features built as the module builds them, and
+* on the tracks the training selects (```scripts/TrkQualTree.C``` run on the new EventNtuples), with the features built as the training builds them.
+
+For each model with a trkqual cut, it also compares the high-quality efficiency at the cut. The cut comes from ```--cut BRANCH=VALUE```, or from a ```summary.json``` given with ```--summary``` (repeatable). The summary must record the same model file, matched by its SHA-256, so a copy of the file is found too. The script writes ```check_art.json```, and exits non-zero if any track's scores differ. Any ```--leaf``` can be checked this way, including the models already in ArtAnalysis.
+
+To compare versions, add each version's models to the fcl as more named branches: one ```TrkQualAll``` producer per version, as in ```EventNtuple/fcl/from_mcs-mixed_trkQualCompare.fcl```. Then give each branch its own ```--leaf```, and add ```--plots```. For v2.0 against v3.0, with the cuts of both at 99% rejection on the v3.0 training sample (```out/v2.0_on_v3.0``` above):
+
+```
+./trkqual_check_art.py configs/v3.0.yaml --ntuples nts.list \
+    --leaf trkqual_ann_v2_0=../../ArtAnalysis/TrkDiag/data/TrkQual_ANN1_v2.0.onnx \
+    --leaf trkqual_bdt_v2_0=../../ArtAnalysis/TrkDiag/data/TrkQual_BDT1_v2.0.ubj \
+    --leaf trkqual_ann_v3_0=out/v3.0/model/TrkQual_ANN1_v3.0.onnx \
+    --leaf trkqual_bdt_v3_0=out/v3.0/model/TrkQual_BDT1_v3.0.ubj \
+    --summary out/v3.0/summary.json --summary out/v2.0_on_v3.0/summary.json \
+    --workdir out/v3.0/compare --plots out/v3.0/compare/plots --title "ensembleMDS3cMix1BB.MDC2025au_best_v1_1"
+```
+
+The plots use art's scores on the tracks the training selects. Each kind of model (```.onnx```, ```.ubj```) gets its own panel:
+
+* score distributions,
+* ROC curves,
+* the efficiency against momentum and the momentum resolution of the tracks passing each cut, and
+* per-track scatter plots of the models of each kind.
 
 ### Training a Model in the Notebook
 For training, you need to ssh into a mu2egpvm machine with a port forwarded, and setup the correct python environment:
