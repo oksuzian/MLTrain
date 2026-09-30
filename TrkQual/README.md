@@ -39,7 +39,25 @@ git fetch mu2e main # get the latest and greatest
 git checkout --no-track -b your-new-branchname mu2e/main
 ```
 
-### Training a Model
+### Training from the Command Line
+```trkqual_train.py``` runs the same steps as the notebook with no Jupyter: it makes any missing TrkQual trees, trains the models, sets each trkqual cut at the configured low-quality rejection, and saves the models, plots, the ```*plots.root``` files and a ```summary.json``` (cuts, efficiencies, AUCs, package versions). Everything that changes between trainings lives in a config file under ```configs/```:
+
+```
+mu2einit
+pyenv trkqual 1.2.0
+cd MLTrain/TrkQual
+./trkqual_train.py configs/v3.0.yaml --outdir out/v3.0
+```
+
+For a new training, copy the latest config, change the datasets and ```training_version```, and commit the config with the model. A training is reproducible: two runs of the same config write identical ```.onnx``` and ```.ubj``` files.
+
+To evaluate models that are already trained (for example the files in ArtAnalysis) instead of training new ones:
+
+```
+./trkqual_train.py configs/v3.0.yaml --models-from ../../ArtAnalysis/TrkDiag/data --outdir out/check
+```
+
+### Training a Model in the Notebook
 For training, you need to ssh into a mu2egpvm machine with a port forwarded, and setup the correct python environment:
 
 ```

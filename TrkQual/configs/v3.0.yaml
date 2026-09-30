@@ -1,0 +1,76 @@
+# TrkQual training configuration, v3.0
+#
+# Trained on MDC2025au. The FlateMinus sample behind the training dataset
+# (dts.mu2e.FlateMinus.MDC2025ap) was generated at 70-120 MeV/c, i.e. it
+# extends above 105 MeV/c, which v2.0's MDC2020aw sample did not.
+
+training_version: "3.0"
+
+# Where the flat TrkQual trees live (trkqual_tree_v<version>_<name>.root).
+# They are made by scripts/TrkQualTree.C if missing.
+trkqual_tree_dirname: /exp/mu2e/data/users/bgonzale/TrkQualTraining
+
+# The Musing used to make the TrkQual trees from the EventNtuples.
+tree_musing: AnalysisMDC2025
+
+datasets:
+  training:   nts.mu2e.FlateMinusMix1BB.MDC2025au_best_v1_1.root
+  validation: nts.mu2e.CeMLeadingLogMix1BB.MDC2025au_best_v1_1.root
+  mock:       nts.mu2e.ensembleMDS3cMix1BB.MDC2025au_best_v1_1.root
+
+# Only tracks from the generated primary are used for training
+# (startCode 173 = mu2eFlateMinus).
+training_start_code: 173
+
+# Input features, in the order the TrackQuality module feeds them to the
+# models. `range` and `unit` are only used for plots.
+features:
+  - {name: nactive, branch: trk.nactive,        range: [0, 100], unit: "[count]"}
+  - {name: factive, branch: trk.factive,        range: [0, 1],   unit: "[fraction]"}
+  - {name: t0err,   branch: trk_ent_pars.t0err, range: [0, 3],   unit: "[ns]"}
+  - {name: fambig,  branch: trk.fambig,         range: [0, 1],   unit: "[fraction]"}
+  - {name: fitcon,  branch: trk.fitcon,         range: [0, 1],   unit: ""}
+  - {name: momerr,  branch: trk_ent.momerr,     range: [0, 5],   unit: "[MeV/c]"}
+  - {name: fstraws, branch: trk.fstraws,        range: [0, 5],   unit: "[1/fraction]"}
+
+# Features that are ratios of two tree branches: name: [numerator, denominator]
+derived_features:
+  trk.factive: [trk.nactive, trk.nhits]
+  trk.fambig:  [trk.nnullambig, trk.nactive]
+  trk.fstraws: [trk.nmatactive, trk.nactive]
+
+# Track quality from the momentum resolution at the tracker entrance,
+# dp = p_reco - p_MC [MeV/c]; tracks in neither class are not trained on.
+high_quality: {min: -0.25, max: 0.25}   # min < dp < max
+low_quality:  {min: 0.7}                # dp > min
+
+# The trkqual cut is set to keep this low-quality track rejection on the
+# training dataset.
+rejection: 0.99
+
+# The balanced high/low-quality sample is split in half for training and
+# testing.
+test_size: 0.5
+split_seed: 42
+
+models:
+  - name: ANN1
+    type: keras_ann
+    hidden_layers: [7, 7, 6]   # sigmoid activations, sigmoid output node
+    learning_rate: 1.0e-3
+    epochs: 500
+    early_stopping_patience: 5
+    seed: 340
+  - name: BDT1
+    type: xgboost_bdt
+    num_boost_round: 500
+    params:
+      objective: "binary:logistic"
+      eval_metric: logloss
+      max_depth: 2
+      eta: 0.04
+      subsample: 0.8
+      colsample_bytree: 0.8
+      lambda: 0.5
+      alpha: 0.5
+      gamma: 0.1
